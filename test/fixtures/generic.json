@@ -1,0 +1,6 @@
+{
+  "event": "deploy.succeeded",
+  "project": "webhook-to-email",
+  "environment": "production",
+  "url": "https://example.com"
+}

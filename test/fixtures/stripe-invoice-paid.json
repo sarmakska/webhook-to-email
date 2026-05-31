@@ -1,0 +1,14 @@
+{
+  "id": "evt_1Mtest",
+  "type": "invoice.paid",
+  "data": {
+    "object": {
+      "id": "in_1Mtest",
+      "number": "INV-2026-001",
+      "amount_paid": 9900,
+      "currency": "gbp",
+      "customer_email": "customer@example.com",
+      "hosted_invoice_url": "https://invoice.stripe.com/i/test"
+    }
+  }
+}

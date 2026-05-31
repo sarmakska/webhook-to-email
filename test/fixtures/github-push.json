@@ -1,0 +1,9 @@
+{
+  "ref": "refs/heads/main",
+  "repository": { "full_name": "sarmakska/webhook-to-email" },
+  "compare": "https://github.com/sarmakska/webhook-to-email/compare/aaa...bbb",
+  "commits": [
+    { "message": "feat: add telegram fan-out", "author": { "name": "Sarma" } },
+    { "message": "test: cover the retry queue", "author": { "name": "Sarma" } }
+  ]
+}
