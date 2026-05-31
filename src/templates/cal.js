@@ -1,21 +1,30 @@
+'use strict'
+
 /**
  * Cal.com booking webhook formatter.
- * Configure: webhook from cal.com sending JSON of triggerEvent BOOKING_CREATED.
+ *
+ * Configure a Cal.com webhook for the BOOKING_CREATED trigger. Cal.com signs
+ * with X-Cal-Signature-256, which the cal verifier profile reads automatically.
+ *
+ * Returns a Markdown body; the renderer derives the HTML and plain-text parts.
  */
 module.exports = function format(p) {
   if (p.triggerEvent === 'BOOKING_CREATED' || p.payload?.title) {
     const b = p.payload || p
     const attendee = b.attendees?.[0] || {}
     return {
-      subject: `📅 New booking · ${attendee.name || 'Someone'} · ${b.title || ''}`,
-      text: `Title: ${b.title}\nWith: ${attendee.name} <${attendee.email}>\nWhen: ${b.startTime}`,
-      html: `<h2>New booking</h2>
-<p><b>Title:</b> ${b.title || '—'}</p>
-<p><b>Attendee:</b> ${attendee.name || '?'} &lt;${attendee.email || ''}&gt;</p>
-<p><b>Start:</b> ${b.startTime || '?'}</p>
-<p><b>End:</b> ${b.endTime || '?'}</p>
-<p><b>Timezone:</b> ${attendee.timeZone || '?'}</p>`,
+      subject: `New booking: ${attendee.name || 'Someone'} - ${b.title || ''}`.trim(),
+      markdown: [
+        '# New booking',
+        '',
+        `**Title:** ${b.title || '-'}`,
+        `**Attendee:** ${attendee.name || '?'} (${attendee.email || ''})`,
+        `**Start:** ${b.startTime || '?'}`,
+        `**End:** ${b.endTime || '?'}`,
+        `**Timezone:** ${attendee.timeZone || '?'}`,
+      ].join('\n'),
     }
   }
+
   return null
 }

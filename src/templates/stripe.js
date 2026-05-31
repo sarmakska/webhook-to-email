@@ -1,28 +1,37 @@
+'use strict'
+
 /**
  * Stripe webhook formatter.
- * Set Stripe webhook signing secret as WEBHOOK_SECRET. Stripe sends sha256= hex format.
+ *
+ * Use the Stripe webhook signing secret as WEBHOOK_SECRET. Stripe signs with the
+ * timestamped Stripe-Signature header, and the per-provider verifier validates
+ * both the signature and the timestamp tolerance.
+ *
+ * Returns a Markdown body; the renderer derives the HTML and plain-text parts.
  */
 module.exports = function format(p) {
   if (p.type === 'invoice.paid') {
     const inv = p.data?.object || {}
     const amount = ((inv.amount_paid || 0) / 100).toFixed(2)
     const ccy = (inv.currency || 'gbp').toUpperCase()
-    return {
-      subject: `💸 Invoice paid · ${amount} ${ccy}`,
-      text: `Customer: ${inv.customer_email || '?'}\nInvoice: ${inv.number || inv.id}\nAmount: ${amount} ${ccy}`,
-      html: `<h2>Invoice paid</h2>
-<p><b>Customer:</b> ${inv.customer_email || '?'}</p>
-<p><b>Invoice:</b> ${inv.number || inv.id}</p>
-<p><b>Amount:</b> ${amount} ${ccy}</p>`,
-    }
+    const lines = [
+      '# Invoice paid',
+      '',
+      `**Amount:** ${amount} ${ccy}`,
+      `**Customer:** ${inv.customer_email || '?'}`,
+      `**Invoice:** ${inv.number || inv.id || '?'}`,
+    ]
+    if (inv.hosted_invoice_url) lines.push('', `[View on Stripe](${inv.hosted_invoice_url})`)
+    return { subject: `Invoice paid: ${amount} ${ccy}`, markdown: lines.join('\n') }
   }
+
   if (p.type === 'customer.subscription.created') {
     const sub = p.data?.object || {}
     return {
-      subject: `🎉 New subscription · ${sub.id}`,
-      text: `Customer: ${sub.customer}\nStatus: ${sub.status}`,
-      html: `<h2>New subscription</h2><p><b>Customer:</b> ${sub.customer}</p><p><b>Status:</b> ${sub.status}</p>`,
+      subject: `New subscription: ${sub.id}`,
+      markdown: ['# New subscription', '', `**Customer:** ${sub.customer || '?'}`, `**Status:** ${sub.status || '?'}`].join('\n'),
     }
   }
+
   return null
 }
