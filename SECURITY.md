@@ -2,17 +2,11 @@
 
 ## Reporting a vulnerability
 
-If you have found a security issue in this project, please report it privately. Do not open a public GitHub issue.
+If you have found a security issue in this project, please report it privately by email to sarma@sarmalinux.com. Do not open a public GitHub issue, and do not disclose the issue publicly until a fix has shipped. Include a clear description of the problem, steps to reproduce, the commit SHA you tested against, and any proof-of-concept code or output so I can confirm it quickly.
 
-**Email:** sarma@sarmalinux.com
+## Response policy
 
-Please include:
-- A clear description of the issue
-- Steps to reproduce
-- The version (commit SHA) you tested against
-- Any proof-of-concept code or output
-
-You should expect an acknowledgement within 5 working days. Confirmed issues will be patched on `main` and released as a tagged version; reporters are credited in the release notes unless they request otherwise.
+I respond within 7 days of receiving a report, including weekends, with an acknowledgement and an initial assessment. Confirmed issues are patched on `main` and released as a tagged version as fast as the severity warrants, and reporters are credited in the release notes unless they ask to remain anonymous.
 
 ## Supported versions
 
