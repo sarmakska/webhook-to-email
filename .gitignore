@@ -1,4 +1,26 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environment
 .env
+.env.*.local
+
+# Logs
 *.log
+npm-debug.log*
+
+# Build output
+build/
+dist/
+
+# Python (tooling, if any)
+__pycache__/
+
+# Rust / native targets
+target/
+
+# OS / editor
 .DS_Store
+*.swp
+.idea/
+.vscode/
