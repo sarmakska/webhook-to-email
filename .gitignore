@@ -9,12 +9,20 @@ node_modules/
 *.log
 npm-debug.log*
 
+# Runtime data (dead-letter inbox, etc.)
+data/
+
 # Build output
 build/
 dist/
 
+# Test / coverage
+coverage/
+.nyc_output/
+
 # Python (tooling, if any)
 __pycache__/
+.pytest_cache/
 
 # Rust / native targets
 target/
