@@ -1,8 +1,11 @@
-const express = require('express')
-const crypto = require('crypto')
-const path = require('path')
-const fs = require('fs')
+'use strict'
+
 const { Resend } = require('resend')
+
+const { createApp } = require('./app')
+const { RetryQueue } = require('./queue')
+const { DeadLetterInbox } = require('./deadletter')
+const { Notifier } = require('./notify')
 
 const {
   RESEND_API_KEY,
@@ -10,6 +13,12 @@ const {
   FROM_EMAIL = 'webhooks@onresend.dev',
   WEBHOOK_SECRET,
   SLACK_WEBHOOK_URL,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHAT_ID,
+  DEAD_LETTER_FILE = './data/dead-letter.jsonl',
+  RETRY_MAX_ATTEMPTS = '5',
+  RETRY_BASE_DELAY_MS = '500',
+  RETRY_MAX_DELAY_MS = '30000',
   PORT = 3000,
 } = process.env
 
@@ -19,105 +28,52 @@ if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
 }
 
 const resend = new Resend(RESEND_API_KEY)
-const app = express()
 
-// Capture raw body for HMAC, then parse JSON
-app.use(
-  express.json({
-    limit: '1mb',
-    verify: (req, _res, buf) => {
-      req.rawBody = buf.toString('utf8')
-    },
-  }),
-)
+const deadLetter = new DeadLetterInbox({ file: DEAD_LETTER_FILE })
 
-app.get('/', (_req, res) => {
-  res.json({ ok: true, service: 'webhook-to-email', uptime: process.uptime() })
+const notifier = new Notifier({
+  sendEmail: (msg) => resend.emails.send(msg),
+  fromEmail: FROM_EMAIL,
+  toEmail: NOTIFY_EMAIL,
+  slackWebhookUrl: SLACK_WEBHOOK_URL,
+  telegramBotToken: TELEGRAM_BOT_TOKEN,
+  telegramChatId: TELEGRAM_CHAT_ID,
 })
 
-app.get('/health', (_req, res) => res.json({ ok: true }))
-
-app.post('/hooks/:source', async (req, res) => {
-  const { source } = req.params
-  try {
-    if (WEBHOOK_SECRET && !verifySignature(req)) {
-      console.warn(`[${source}] signature mismatch`)
-      return res.status(401).json({ ok: false, error: 'Invalid signature' })
-    }
-
-    const formatted = formatPayload(source, req.body)
-    await sendEmailWithRetry(formatted)
-    if (SLACK_WEBHOOK_URL) await sendSlack(source, formatted)
-
-    console.log(`[${source}] delivered: ${formatted.subject}`)
-    res.json({ ok: true })
-  } catch (e) {
-    console.error(`[${source}] error:`, e)
-    res.status(500).json({ ok: false, error: e.message || String(e) })
-  }
+const queue = new RetryQueue({
+  handler: (job) => notifier.deliver(job),
+  deadLetter,
+  maxAttempts: Number(RETRY_MAX_ATTEMPTS),
+  baseDelayMs: Number(RETRY_BASE_DELAY_MS),
+  maxDelayMs: Number(RETRY_MAX_DELAY_MS),
 })
 
-function verifySignature(req) {
-  const headerRaw = req.get('X-Signature') || req.get('X-Hub-Signature-256') || req.get('X-Stripe-Signature')
-  if (!headerRaw) return false
-  const provided = headerRaw.replace(/^sha256=/, '').trim()
-  const expected = crypto.createHmac('sha256', WEBHOOK_SECRET).update(req.rawBody || '').digest('hex')
-  if (provided.length !== expected.length) return false
-  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
-}
+const app = createApp({
+  secret: WEBHOOK_SECRET,
+  notifier,
+  queue,
+  deadLetter,
+})
 
-function formatPayload(source, payload) {
-  const tplPath = path.join(__dirname, 'templates', `${source}.js`)
-  if (fs.existsSync(tplPath)) {
-    try {
-      const tpl = require(tplPath)
-      const out = tpl(payload)
-      if (out && out.subject) return out
-    } catch (e) {
-      console.warn(`Template ${source} threw, falling back:`, e.message)
-    }
-  }
-  // Default formatter
-  return {
-    subject: `Webhook · ${source}`,
-    text: JSON.stringify(payload, null, 2),
-    html: `<pre style="font-family:ui-monospace,monospace;white-space:pre-wrap;background:#f5f5f5;padding:16px;border-radius:8px">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`,
-  }
-}
-
-function escapeHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-async function sendEmailWithRetry({ subject, text, html }) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      await resend.emails.send({ from: FROM_EMAIL, to: NOTIFY_EMAIL, subject, text, html })
-      return
-    } catch (e) {
-      if (attempt === 1) throw e
-      await new Promise((r) => setTimeout(r, 500))
-    }
-  }
-}
-
-async function sendSlack(source, { subject, text }) {
-  try {
-    await fetch(SLACK_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: `*${subject}*\n\`\`\`${text.slice(0, 2500)}\`\`\``,
-        username: `webhook · ${source}`,
-      }),
-    })
-  } catch (e) {
-    console.warn('Slack forward failed:', e.message)
-  }
-}
-
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`webhook-to-email listening on :${PORT}`)
-  if (WEBHOOK_SECRET) console.log('HMAC verification: ON')
-  if (SLACK_WEBHOOK_URL) console.log('Slack fan-out: ON')
+  if (WEBHOOK_SECRET) console.log('HMAC verification: ON (per-provider)')
+  if (notifier.slackEnabled) console.log('Slack fan-out: ON')
+  if (notifier.telegramEnabled) console.log('Telegram fan-out: ON')
+  console.log(`Retry queue: max ${RETRY_MAX_ATTEMPTS} attempts, exponential backoff`)
+  console.log(`Dead-letter inbox: ${DEAD_LETTER_FILE}`)
 })
+
+function shutdown(signal) {
+  console.log(`Received ${signal}, draining queue to dead-letter inbox...`)
+  const flushed = queue.flushToDeadLetter(signal)
+  if (flushed) console.log(`Flushed ${flushed} undelivered job(s) to dead-letter inbox`)
+  server.close(() => process.exit(0))
+  // Hard exit if close hangs.
+  setTimeout(() => process.exit(0), 3000).unref()
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+
+module.exports = { app, server }
