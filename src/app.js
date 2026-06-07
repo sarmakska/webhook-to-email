@@ -3,6 +3,7 @@
 const express = require('express')
 const path = require('path')
 const fs = require('fs')
+const crypto = require('crypto')
 
 const { verifyRequest } = require('./verify')
 const render = require('./render')
@@ -35,6 +36,7 @@ function createApp(config = {}) {
     logger = console,
     bodyLimit = '1mb',
     stripeTolerance,
+    replayToken = process.env.WEBHOOK_REPLAY_TOKEN,
   } = config
 
   if (!notifier) throw new TypeError('createApp requires a notifier')
@@ -76,6 +78,36 @@ function createApp(config = {}) {
     res.json({ ok: true, count: dl.size(), items: dl.list(limit) })
   })
 
+  // Re-enqueue a stored failure for another delivery attempt. Guarded by a
+  // bearer token so a public deployment cannot be used to replay arbitrary
+  // entries. If no WEBHOOK_REPLAY_TOKEN is configured the endpoint is disabled.
+  app.post('/dead-letter/:id/replay', (req, res) => {
+    if (!replayToken) {
+      return res.status(404).json({ ok: false, error: 'Replay endpoint disabled' })
+    }
+    if (!bearerMatches(req.get('authorization'), replayToken)) {
+      return res.status(401).json({ ok: false, error: 'Unauthorised' })
+    }
+
+    const { id } = req.params
+    const entry = dl.get(id)
+    if (!entry) {
+      return res.status(404).json({ ok: false, error: 'No such dead-letter entry' })
+    }
+
+    // Re-render from the stored payload so a fixed template takes effect.
+    const message = formatPayload(entry.source, entry.payload, templatesDir, logger)
+    if (message.skip) {
+      dl.remove(id)
+      return res.status(200).json({ ok: true, replayed: false, skipped: true })
+    }
+
+    q.enqueue({ source: entry.source, payload: entry.payload, message })
+    dl.remove(id)
+    logger.log(`[${entry.source}] replayed dead-letter ${id}`)
+    return res.status(202).json({ ok: true, replayed: true, id, subject: message.subject })
+  })
+
   app.post('/hooks/:source', (req, res) => {
     const { source } = req.params
     try {
@@ -94,6 +126,14 @@ function createApp(config = {}) {
       }
 
       const message = formatPayload(source, req.body, templatesDir, logger)
+
+      // A template can return { skip: true } to drop an event without emailing,
+      // for example a noisy heartbeat or an event type you do not care about.
+      if (message.skip) {
+        logger.log(`[${source}] skipped by template`)
+        return res.status(202).json({ ok: true, queued: false, skipped: true })
+      }
+
       const job = q.enqueue({ source, payload: req.body, message })
 
       logger.log(`[${source}] queued: ${message.subject}`)
@@ -135,4 +175,20 @@ function formatPayload(source, payload, templatesDir, logger = console) {
   return render.normalise({ subject: `Webhook: ${source}`, markdown })
 }
 
-module.exports = { createApp, formatPayload, Notifier, RetryQueue, DeadLetterInbox }
+/**
+ * Constant-time check of an `Authorization: Bearer <token>` header against the
+ * configured replay token. Returns false for any malformed or absent header.
+ */
+function bearerMatches(authHeader, expected) {
+  if (typeof authHeader !== 'string' || typeof expected !== 'string' || expected.length === 0) {
+    return false
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim())
+  if (!match) return false
+  const provided = Buffer.from(match[1], 'utf8')
+  const want = Buffer.from(expected, 'utf8')
+  if (provided.length !== want.length) return false
+  return crypto.timingSafeEqual(provided, want)
+}
+
+module.exports = { createApp, formatPayload, bearerMatches, Notifier, RetryQueue, DeadLetterInbox }

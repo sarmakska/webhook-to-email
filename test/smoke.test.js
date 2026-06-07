@@ -5,6 +5,8 @@ const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const path = require('node:path')
 
+const { bearerMatches } = require('../src/app')
+
 const root = path.join(__dirname, '..')
 const tpl = (name) => require(path.join(root, 'src', 'templates', name))
 
@@ -12,6 +14,18 @@ test('every source file parses without syntax errors', () => {
   for (const f of ['index.js', 'app.js', 'verify.js', 'render.js', 'queue.js', 'deadletter.js', 'notify.js']) {
     execFileSync(process.execPath, ['--check', path.join(root, 'src', f)])
   }
+  for (const f of ['github.js', 'stripe.js', 'linear.js', 'cal.js']) {
+    execFileSync(process.execPath, ['--check', path.join(root, 'src', 'templates', f)])
+  }
+})
+
+test('github template skips a zero-commit push', () => {
+  const out = tpl('github.js')({
+    ref: 'refs/heads/main',
+    commits: [],
+    repository: { full_name: 'sarmakska/webhook-to-email' },
+  })
+  assert.deepEqual(out, { skip: true })
 })
 
 test('stripe template formats invoice.paid as markdown', () => {
@@ -58,6 +72,15 @@ test('linear template formats an issue create', () => {
   assert.ok(out)
   assert.match(out.subject, /ENG-12/)
   assert.match(out.markdown, /High/)
+})
+
+test('bearerMatches accepts the exact token and rejects everything else', () => {
+  assert.equal(bearerMatches('Bearer s3cret', 's3cret'), true)
+  assert.equal(bearerMatches('bearer s3cret', 's3cret'), true)
+  assert.equal(bearerMatches('Bearer wrong', 's3cret'), false)
+  assert.equal(bearerMatches('s3cret', 's3cret'), false)
+  assert.equal(bearerMatches(undefined, 's3cret'), false)
+  assert.equal(bearerMatches('Bearer s3cret', ''), false)
 })
 
 test('cal template returns an object or null without throwing', () => {

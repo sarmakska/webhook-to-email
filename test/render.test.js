@@ -53,3 +53,9 @@ test('normalise rejects a result without a subject', () => {
   assert.equal(normalise(null), null)
   assert.equal(normalise({ markdown: 'x' }), null)
 })
+
+test('normalise passes a skip signal through', () => {
+  assert.deepEqual(normalise({ skip: true }), { skip: true })
+  // skip wins even when other fields are present
+  assert.deepEqual(normalise({ skip: true, subject: 'S', markdown: '# Hi' }), { skip: true })
+})

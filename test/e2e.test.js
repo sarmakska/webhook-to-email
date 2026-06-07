@@ -33,14 +33,15 @@ const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', name)
  * Spin up an app on an ephemeral port. Returns the base url, captured emails,
  * captured fan-out calls, the dead-letter inbox and a stop() function.
  */
-async function startApp({ secret = undefined, failEmail = false } = {}) {
+async function startApp({ secret = undefined, failEmail = false, replayToken = undefined } = {}) {
   const emails = []
   const fanout = []
   const deadLetter = new DeadLetterInbox()
+  const emailState = { fail: failEmail }
 
   const notifier = new Notifier({
     sendEmail: async (msg) => {
-      if (failEmail) throw new Error('resend rejected')
+      if (emailState.fail) throw new Error('resend rejected')
       emails.push(msg)
     },
     fromEmail: 'webhooks@example.com',
@@ -63,7 +64,7 @@ async function startApp({ secret = undefined, failEmail = false } = {}) {
     setTimeoutFn: immediate,
   })
 
-  const app = createApp({ secret, notifier, queue, deadLetter, logger: silentLogger })
+  const app = createApp({ secret, replayToken, notifier, queue, deadLetter, logger: silentLogger })
   const server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s))
   })
@@ -75,6 +76,7 @@ async function startApp({ secret = undefined, failEmail = false } = {}) {
     fanout,
     deadLetter,
     queue,
+    emailState,
     async stop() {
       await new Promise((r) => server.close(r))
     },
@@ -218,6 +220,99 @@ test('dead-letter: a permanently failing send lands in the inbox and the endpoin
     assert.equal(listed.items[0].source, 'stripe')
     assert.match(listed.items[0].error, /resend rejected/)
     assert.equal(listed.items[0].attempts, 3)
+  } finally {
+    await app.stop()
+  }
+})
+
+test('skip: a zero-commit github push is dropped without emailing', async () => {
+  const app = await startApp()
+  try {
+    const res = await fetch(`${app.base}/hooks/github`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ref: 'refs/heads/main',
+        commits: [],
+        repository: { full_name: 'sarmakska/webhook-to-email' },
+      }),
+    })
+    assert.equal(res.status, 202)
+    const json = await res.json()
+    assert.equal(json.queued, false)
+    assert.equal(json.skipped, true)
+
+    await drain(app.queue)
+    assert.equal(app.emails.length, 0)
+    assert.equal(app.deadLetter.size(), 0)
+  } finally {
+    await app.stop()
+  }
+})
+
+test('replay: endpoint is disabled with 404 when no token is configured', async () => {
+  const app = await startApp()
+  try {
+    const res = await fetch(`${app.base}/dead-letter/anything/replay`, { method: 'POST' })
+    assert.equal(res.status, 404)
+  } finally {
+    await app.stop()
+  }
+})
+
+test('replay: a stored failure is re-enqueued and delivered after the fault clears', async () => {
+  const app = await startApp({ failEmail: true, replayToken: 'replay-secret' })
+  try {
+    // First delivery fails permanently and lands in the dead-letter inbox.
+    await fetch(`${app.base}/hooks/stripe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: fixture('stripe-invoice-paid.json'),
+    })
+    await drain(app.queue)
+    assert.equal(app.deadLetter.size(), 1)
+    const id = app.deadLetter.list(1)[0].id
+
+    // Missing token is rejected.
+    const noAuth = await fetch(`${app.base}/dead-letter/${id}/replay`, { method: 'POST' })
+    assert.equal(noAuth.status, 401)
+
+    // Wrong token is rejected.
+    const badAuth = await fetch(`${app.base}/dead-letter/${id}/replay`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer nope' },
+    })
+    assert.equal(badAuth.status, 401)
+
+    // The fault clears, then a correct token replays the entry.
+    app.emailState.fail = false
+    const replay = await fetch(`${app.base}/dead-letter/${id}/replay`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer replay-secret' },
+    })
+    assert.equal(replay.status, 202)
+    const json = await replay.json()
+    assert.equal(json.replayed, true)
+    assert.equal(json.id, id)
+
+    await drain(app.queue)
+    assert.equal(app.emails.length, 1)
+    assert.match(app.emails[0].subject, /Invoice paid/)
+    // The entry is removed from the in-memory inbox once replayed.
+    assert.equal(app.deadLetter.size(), 0)
+  } finally {
+    await app.stop()
+  }
+})
+
+test('replay: an unknown id returns 404 with a valid token', async () => {
+  const app = await startApp({ replayToken: 'replay-secret' })
+  try {
+    const res = await fetch(`${app.base}/dead-letter/does-not-exist/replay`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer replay-secret' },
+    })
+    assert.equal(res.status, 404)
   } finally {
     await app.stop()
   }

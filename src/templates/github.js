@@ -14,6 +14,10 @@ module.exports = function format(p) {
     const repo = p.repository.full_name
     const branch = (p.ref || '').replace('refs/heads/', '')
     const count = p.commits.length
+
+    // Branch deletes and tag-only pushes arrive as zero-commit push events.
+    // They are noise for an email digest, so drop them without delivering.
+    if (count === 0) return { skip: true }
     const lines = [
       `# ${count} commit${count === 1 ? '' : 's'} to ${repo}@${branch}`,
       '',
