@@ -21,6 +21,6 @@
   },
   "dependencies": {
     "express": "^4.22.2",
-    "resend": "^4.8.0"
+    "resend": "^6.12.4"
   }
 }
