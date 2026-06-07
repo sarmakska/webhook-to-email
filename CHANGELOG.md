@@ -6,13 +6,15 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Dead-letter replay endpoint. An authenticated `POST /dead-letter/:id/replay` re-renders a stored failure from its saved payload and re-enqueues it for delivery. The endpoint is guarded by a bearer token (`WEBHOOK_REPLAY_TOKEN`) compared in constant time, and stays disabled with a `404` until the token is set.
+- Skip-on-template. A source template can return `{ skip: true }` to drop an event without delivering, which `POST /hooks/:source` acknowledges with `202 {"skipped":true}`. The bundled GitHub template now skips zero-commit pushes such as branch deletes and tag-only pushes.
 - Per-provider HMAC verification. The verifier now knows the signing scheme for GitHub, Cal.com, Linear and Stripe, including Stripe's timestamped `Stripe-Signature` header with a configurable tolerance for replay protection, and keeps a generic `sha256=<hex>` fallback for any other source.
 - Retry queue with exponential backoff. Delivery is decoupled from the request: `POST /hooks/:source` now returns `202` immediately and a background worker delivers with configurable attempts, exponential backoff and full jitter.
 - Dead-letter inbox. Jobs that exhaust every retry are appended to a JSON Lines file and held in a bounded in-memory ring, browsable at `GET /dead-letter`. Undelivered jobs are flushed to the inbox on a clean shutdown.
 - Rich Markdown email rendering. Templates now return a `markdown` field, and a dependency-free renderer produces a styled inline-CSS HTML body plus a clean plain-text fallback, with all payload values HTML-escaped.
 - Telegram fan-out via `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 - Linear source template.
-- End-to-end test suite over the real Express app with JSON fixtures, plus unit suites for the verifier, renderer, retry queue, dead-letter inbox and notifier. Forty-four tests in total.
+- End-to-end test suite over the real Express app with JSON fixtures, plus unit suites for the verifier, renderer, retry queue, dead-letter inbox and notifier. Fifty-three tests in total.
 - `GET /dead-letter` endpoint and richer `GET /` payload reporting queue depth and dead-letter count.
 - Configuration for the retry queue and dead-letter file (`RETRY_MAX_ATTEMPTS`, `RETRY_BASE_DELAY_MS`, `RETRY_MAX_DELAY_MS`, `DEAD_LETTER_FILE`).
 - `ARCHITECTURE.md` and `ROADMAP.md` at the repository root.

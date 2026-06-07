@@ -11,6 +11,8 @@
 - Dead-letter inbox (JSONL file plus in-memory ring) with a `GET /dead-letter` endpoint
 - Slack Block Kit fan-out
 - Telegram fan-out
+- Skip-on-template (`{ skip: true }`) to drop events without delivering
+- Authenticated dead-letter replay endpoint (`POST /dead-letter/:id/replay`)
 - Comma-separated multi-recipient `NOTIFY_EMAIL`
 - Graceful shutdown that flushes undelivered jobs to the dead-letter inbox
 - End-to-end and unit test suites with fixtures
@@ -21,8 +23,7 @@
 ## Next up
 
 - **Per-route routing.** Different sources to different recipients, driven by config rather than a single `NOTIFY_EMAIL`.
-- **Skip-on-template.** Let a template return `{ skip: true }` to drop unwanted events without emailing.
-- **Dead-letter replay endpoint.** An authenticated `POST /dead-letter/:id/replay` that re-enqueues a stored failure.
+- **Bulk dead-letter replay.** Replay every stored failure for a source in one authenticated call.
 - **More templates.** Sentry, PostHog, Vercel deploy hooks.
 
 ## Wishlist (lower priority)

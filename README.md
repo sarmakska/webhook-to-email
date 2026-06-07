@@ -11,6 +11,8 @@ A small, self-hosted Node.js service that turns webhook traffic from Stripe, Git
 ## What is in the box
 
 - **Single endpoint.** `POST /hooks/:source` accepts any JSON body. `GET /` reports queue depth and dead-letter count, `GET /health` is for liveness, and `GET /dead-letter` lists recent delivery failures.
+- **Dead-letter replay.** An authenticated `POST /dead-letter/:id/replay` re-renders a stored failure from its saved payload and re-enqueues it, so a fixed template or a recovered provider gets the event delivered without re-firing the source.
+- **Skip noisy events.** A template can return `{ skip: true }` to drop an event without emailing. The bundled GitHub template uses this to swallow zero-commit pushes such as branch deletes and tag-only pushes.
 - **Per-provider HMAC verification.** Set `WEBHOOK_SECRET` and every request must carry a valid signature. The verifier knows the signing scheme for GitHub, Cal.com, Linear and Stripe, including Stripe's timestamped header with replay protection, and falls back to a generic `sha256=<hex>` scheme for everything else.
 - **Retry queue with exponential backoff.** Delivery is decoupled from the request. The endpoint returns `202` immediately and a background worker delivers with configurable attempts and exponential backoff with jitter.
 - **Dead-letter inbox.** A job that exhausts every retry is written to a JSON Lines file and kept in a bounded in-memory ring, browsable at `GET /dead-letter`. Undelivered jobs are flushed to the inbox on shutdown.
@@ -63,6 +65,7 @@ A request comes in, the signature is checked when a secret is configured, the pa
 | `NOTIFY_EMAIL` | yes | none | Recipient. Comma-separate for several |
 | `FROM_EMAIL` | no | `webhooks@onresend.dev` | Use a verified domain in production |
 | `WEBHOOK_SECRET` | no | none | If set, requests must carry a valid HMAC signature |
+| `WEBHOOK_REPLAY_TOKEN` | no | none | If set, enables `POST /dead-letter/:id/replay` behind this bearer token |
 | `SLACK_WEBHOOK_URL` | no | none | If set, events fan out to Slack |
 | `TELEGRAM_BOT_TOKEN` | no | none | Telegram bot token (needs `TELEGRAM_CHAT_ID` too) |
 | `TELEGRAM_CHAT_ID` | no | none | Telegram chat to post to |
@@ -97,6 +100,30 @@ module.exports = function format(payload) {
 ```
 
 POST to `/hooks/stripe` and the template fires. See `examples/` and the bundled Stripe, GitHub, Cal.com and Linear templates for more.
+
+To drop an event without emailing, return `{ skip: true }`. The endpoint acknowledges it with `202 {"ok":true,"skipped":true}` and nothing is queued or delivered. This keeps low-value events such as heartbeats or branch deletes out of the inbox.
+
+```js
+module.exports = function format(payload) {
+  if (payload.type === 'ping') return { skip: true }
+  // ...real formatting
+}
+```
+
+## Replaying a dead-letter
+
+Set `WEBHOOK_REPLAY_TOKEN` to enable the replay endpoint. A stored failure is re-rendered from its saved payload and re-enqueued, which is what you want after fixing a template or once a flaky provider recovers. The token is checked in constant time, and the endpoint returns `404` while it is unset so a public deployment cannot be probed.
+
+```bash
+# find the id
+curl http://localhost:3000/dead-letter | jq '.items[0].id'
+
+# replay it
+curl -X POST http://localhost:3000/dead-letter/<id>/replay \
+  -H "Authorization: Bearer $WEBHOOK_REPLAY_TOKEN"
+```
+
+A successful replay returns `202 {"ok":true,"replayed":true}` and removes the entry from the in-memory inbox. The original line stays in the JSONL audit log on disk.
 
 ## When to use this
 
