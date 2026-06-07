@@ -69,6 +69,23 @@ class DeadLetterInbox {
     return this.recent.slice(-limit).reverse()
   }
 
+  /** Look up a single in-memory entry by id, or null if it has aged out. */
+  get(id) {
+    return this.recent.find((e) => e.id === id) || null
+  }
+
+  /**
+   * Drop an entry from the in-memory ring by id and report whether it was found.
+   * The JSONL file is an append-only audit log and is intentionally left intact,
+   * so a replayed failure keeps its original record on disk.
+   */
+  remove(id) {
+    const idx = this.recent.findIndex((e) => e.id === id)
+    if (idx === -1) return false
+    this.recent.splice(idx, 1)
+    return true
+  }
+
   /** Number of failures held in memory. */
   size() {
     return this.recent.length

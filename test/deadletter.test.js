@@ -31,6 +31,22 @@ test('in-memory ring is bounded by maxInMemory', () => {
   assert.equal(dl.size(), 3)
 })
 
+test('get looks up an entry by id and returns null when absent', () => {
+  const dl = new DeadLetterInbox()
+  const e = dl.record({ source: 's', payload: {}, error: 'e' })
+  assert.equal(dl.get(e.id).source, 's')
+  assert.equal(dl.get('missing'), null)
+})
+
+test('remove drops an entry from the ring and reports the result', () => {
+  const dl = new DeadLetterInbox()
+  const e = dl.record({ source: 's', payload: {}, error: 'e' })
+  assert.equal(dl.remove('missing'), false)
+  assert.equal(dl.remove(e.id), true)
+  assert.equal(dl.size(), 0)
+  assert.equal(dl.get(e.id), null)
+})
+
 test('persists to a JSONL file that can be replayed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-'))
   const file = path.join(dir, 'sub', 'dead-letter.jsonl')

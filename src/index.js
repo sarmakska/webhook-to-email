@@ -12,6 +12,7 @@ const {
   NOTIFY_EMAIL,
   FROM_EMAIL = 'webhooks@onresend.dev',
   WEBHOOK_SECRET,
+  WEBHOOK_REPLAY_TOKEN,
   SLACK_WEBHOOK_URL,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID,
@@ -50,6 +51,7 @@ const queue = new RetryQueue({
 
 const app = createApp({
   secret: WEBHOOK_SECRET,
+  replayToken: WEBHOOK_REPLAY_TOKEN,
   notifier,
   queue,
   deadLetter,
@@ -58,6 +60,7 @@ const app = createApp({
 const server = app.listen(PORT, () => {
   console.log(`webhook-to-email listening on :${PORT}`)
   if (WEBHOOK_SECRET) console.log('HMAC verification: ON (per-provider)')
+  if (WEBHOOK_REPLAY_TOKEN) console.log('Dead-letter replay: ON (POST /dead-letter/:id/replay)')
   if (notifier.slackEnabled) console.log('Slack fan-out: ON')
   if (notifier.telegramEnabled) console.log('Telegram fan-out: ON')
   console.log(`Retry queue: max ${RETRY_MAX_ATTEMPTS} attempts, exponential backoff`)
